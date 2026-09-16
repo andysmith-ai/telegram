@@ -90,4 +90,4 @@ python publish/publish.py --dry-run     # no token -> prints what it would post
 - **Image URL**: decide what the producer bakes into `image:` — the R2 `.jpg`
   rendition once R2 is active (see the researcher's `docs/publisher.md`); until then
   omit it (link posts publish without a photo).
-- **Threads / X** publishers — same reconcile+state shape, different platform adapter.
+- **X publisher** — the Threads publisher now lives in `andysmith-ai/threads`.
