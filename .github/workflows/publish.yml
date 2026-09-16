@@ -1,0 +1,37 @@
+name: Publish to Telegram
+
+# On push of any post, publish the ones not yet in state.json (oldest-first).
+# publish.py itself CLAIMS each post in state.json and pushes BEFORE sending, so a
+# crash can only drop a post, never duplicate it. `[skip ci]` on those commits
+# avoids re-triggering this workflow.
+on:
+  push:
+    branches: [main]
+    paths: ['posts/**']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write            # publish.py commits + pushes state.json
+
+concurrency: telegram-publish   # never two publishers at once
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4   # persist-credentials: true -> git push works
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'    # stdlib only -- no pip install
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "telegram-publisher"
+          git config user.email "bot@andysmith.ai"
+
+      - name: Publish new posts (claim-then-send)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ vars.TG_CHAT_ID }}       # e.g. @andysmith_ai
+          TG_USERNAME: ${{ vars.TG_USERNAME }}     # e.g. andysmith_ai (for permalinks)
+        run: python publish/publish.py
