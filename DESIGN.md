@@ -72,7 +72,8 @@ verified in that session (headings/paragraphs/links/photos).
 
 ## One-time setup
 - Repo **secret**: `TELEGRAM_BOT_TOKEN`.
-- Repo **variables**: `TG_CHAT_ID` = `@andysmith_ai`, `TG_USERNAME` = `andysmith_ai`.
+- Repo **variable**: `TG_USERNAME` = `andysmith_ai`; the publisher derives chat id
+  `@andysmith_ai` and the public permalink from it.
 - The bot must be an **admin** of the channel.
 
 ## Local test

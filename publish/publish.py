@@ -20,10 +20,11 @@ Post file  posts/YYYY-MM-DD-<slug>.md :
     ---
     <body markdown>
 
-Env: TELEGRAM_BOT_TOKEN (secret), TG_CHAT_ID (e.g. @andysmith_ai), TG_USERNAME
-(optional, for permalinks). In CI `actions/checkout` provides push creds and the
-workflow sets the git identity. Flags: --dry-run (no send), --no-push (send but
-don't touch git; local testing only).
+Env: TELEGRAM_BOT_TOKEN (secret), TG_USERNAME (public channel username, with or
+without `@`). The chat id and public permalink are derived from that one value.
+In CI `actions/checkout` provides push creds and the workflow sets the git
+identity. Flags: --dry-run (no send), --no-push (send but don't touch git;
+local testing only).
 """
 
 import glob
@@ -96,9 +97,11 @@ def main() -> int:
     dry = "--dry-run" in sys.argv[1:]
     push = "--no-push" not in sys.argv[1:]
     state = json.load(open(STATE)) if os.path.exists(STATE) else {}
-    chat_id = os.environ.get("TG_CHAT_ID", "")
-    username = os.environ.get("TG_USERNAME") or None
+    username = (os.environ.get("TG_USERNAME") or "").strip().lstrip("@") or None
+    chat_id = f"@{username}" if username else ""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if token and not dry and not username:
+        raise RuntimeError("TG_USERNAME is required for Telegram publishing")
     tg = Telegram(token) if (token and not dry) else None
 
     failed = 0

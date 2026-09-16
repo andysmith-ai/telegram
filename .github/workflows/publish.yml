@@ -32,6 +32,5 @@ jobs:
       - name: Publish new posts (claim-then-send)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ vars.TG_CHAT_ID }}       # e.g. @andysmith_ai
-          TG_USERNAME: ${{ vars.TG_USERNAME }}     # e.g. andysmith_ai (for permalinks)
+          TG_USERNAME: ${{ vars.TG_USERNAME }}     # andysmith_ai -> chat @andysmith_ai
         run: python publish/publish.py

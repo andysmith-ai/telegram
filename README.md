@@ -8,5 +8,5 @@ logic here.
 - Publisher: [`publish/publish.py`](publish/publish.py) (reconcile vs `state.json`)
 - Workflow: [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
 
-Setup: repo secret `TELEGRAM_BOT_TOKEN`; repo vars `TG_CHAT_ID` (`@andysmith_ai`),
-`TG_USERNAME` (`andysmith_ai`); bot is a channel admin.
+Setup: repo secret `TELEGRAM_BOT_TOKEN`; repo variable `TG_USERNAME`
+(`andysmith_ai`); bot is a channel admin.
