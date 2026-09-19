@@ -167,7 +167,7 @@ def _migrate_root_state(push: bool, root: str = ".") -> None:
             f.write("\n")
         migrated.append(path)
     os.remove(legacy)
-    if push and migrated:
+    if push:
         _commit_push("migrate root state.json to sibling state files [skip ci]",
                      migrated + [legacy])
 
