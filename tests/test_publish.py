@@ -169,13 +169,13 @@ class PublishTestCase(unittest.TestCase):
 
         with patch("publish.Telegram", return_value=MagicMock()) as MockTg, \
              patch("publish._commit_push") as mock_commit:
-            main(argv=["--no-push"], root=self.root)
+            main(argv=[], root=self.root)
             MockTg.return_value.send_rich_message.assert_not_called()
+            migration_calls = [c for c in mock_commit.call_args_list
+                               if "migrate root state.json" in c.args[0]]
+            self.assertEqual(len(migration_calls), 1)
+            self.assertEqual(migration_calls[0].args[1], [legacy])
 
-        migration_calls = [c for c in mock_commit.call_args_list
-                           if "migrate root state.json" in c.args[0]]
-        self.assertEqual(len(migration_calls), 1)
-        self.assertEqual(migration_calls[0].args[1], [legacy])
         self.assertFalse(os.path.exists(legacy))
 
 
