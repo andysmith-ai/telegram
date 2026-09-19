@@ -141,5 +141,72 @@ class PublishTestCase(unittest.TestCase):
         self.assertEqual(state["url"], "https://t.me/old/144")
 
 
+    def test_dry_run_does_not_mutate_legacy_state(self):
+        """--dry-run treats root state.json as published without creating files."""
+        slug = "2026-09-15-fx-sh"
+        self._write_post(slug)
+        legacy = os.path.join(self.root, "state.json")
+        with open(legacy, "w", encoding="utf-8") as f:
+            json.dump({slug: {"message_id": 144, "url": "https://t.me/old/144"}}, f)
+
+        with patch("publish.Telegram") as MockTg:
+            main(argv=["--dry-run"], root=self.root)
+            MockTg.assert_not_called()
+
+        self.assertTrue(os.path.exists(legacy))
+        self.assertIsNone(load_state(slug, self.root))
+
+
+class CommitPushTestCase(unittest.TestCase):
+    @patch("publish.subprocess.run")
+    def test_rebase_and_retry_on_non_fast_forward(self, mock_run):
+        """_commit_push fetches/rebases when origin advanced since commit."""
+        from publish import _commit_push
+
+        responses = [
+            MagicMock(returncode=0),                           # git add
+            MagicMock(returncode=0),                           # git commit
+            MagicMock(returncode=1, stderr="non-fast-forward"), # push fails
+            MagicMock(returncode=0),                           # git fetch origin
+            MagicMock(returncode=0),                           # git rebase origin/main
+            MagicMock(returncode=0),                           # push succeeds
+        ]
+        mock_run.side_effect = responses
+
+        _commit_push("claim x [skip ci]", ["posts/x.state.json"])
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        self.assertEqual(calls, [
+            ["git", "add", "posts/x.state.json"],
+            ["git", "commit", "-m", "claim x [skip ci]"],
+            ["git", "push"],
+            ["git", "fetch", "origin"],
+            ["git", "rebase", "origin/main"],
+            ["git", "push"],
+        ])
+
+    @patch("publish.subprocess.run")
+    def test_raises_after_exhausted_retries(self, mock_run):
+        """_commit_push gives up after repeated non-fast-forward failures."""
+        from publish import _commit_push
+
+        responses = [
+            MagicMock(returncode=0),                           # git add
+            MagicMock(returncode=0),                           # git commit
+        ] + [
+            MagicMock(returncode=1, stderr="non-fast-forward"), # push fails
+            MagicMock(returncode=0),                           # fetch
+            MagicMock(returncode=0),                           # rebase
+        ] * 5 + [
+            MagicMock(returncode=1, stderr="non-fast-forward"), # final push fails
+        ]
+        mock_run.side_effect = responses
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _commit_push("claim x [skip ci]", ["posts/x.state.json"])
+
+        self.assertIn("git push failed", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

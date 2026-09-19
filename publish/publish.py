@@ -95,16 +95,42 @@ def load_state(slug: str, root: str = ".") -> dict | None:
         return json.load(f)
 
 
-def _commit_push(msg: str, paths: list[str]) -> None:
-    """Commit the given paths and push. Raises on failure (so we NEVER send
-    having failed to persist the claim -- a failed claim just retries next run)."""
+def _commit_push(msg: str, paths: list[str], max_push_retries: int = 5) -> None:
+    """Commit the given paths and push.
+
+    If the push fails because origin advanced since checkout (non-fast-forward),
+    fetch and rebase onto origin/main before retrying. This keeps a safely-
+    claimed post from being abandoned when parallel producers advance main
+    between the workflow checkout and the state commit. Raises on failure (so
+    we NEVER send having failed to persist the claim -- a failed claim just
+    retries next run).
+    """
     subprocess.run(["git", "add", *paths], check=True, capture_output=True, text=True)
     c = subprocess.run(["git", "commit", "-m", msg], capture_output=True, text=True)
     if c.returncode != 0:
         if "nothing to commit" in (c.stdout + c.stderr):
             return
         raise RuntimeError(f"git commit failed: {c.stderr.strip()}")
-    subprocess.run(["git", "push"], check=True, capture_output=True, text=True)
+
+    stderr = ""
+    for attempt in range(max_push_retries):
+        p = subprocess.run(["git", "push"], capture_output=True, text=True)
+        if p.returncode == 0:
+            return
+        stderr = p.stderr
+        err = stderr.lower()
+        if "non-fast-forward" in err or "fetch first" in err or "rejected" in err:
+            subprocess.run(["git", "fetch", "origin"], check=True,
+                           capture_output=True, text=True)
+            r = subprocess.run(["git", "rebase", "origin/main"],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                subprocess.run(["git", "rebase", "--abort"], check=False,
+                               capture_output=True, text=True)
+                raise RuntimeError(f"git rebase failed: {r.stderr.strip()}")
+            continue
+        break
+    raise RuntimeError(f"git push failed: {stderr.strip()}")
 
 
 def save_state(slug: str, record: dict, msg: str, push: bool, root: str = ".") -> None:
@@ -146,6 +172,15 @@ def _migrate_root_state(push: bool, root: str = ".") -> None:
                      migrated + [legacy])
 
 
+def _legacy_slugs(root: str = ".") -> set[str]:
+    """Return slugs recorded in a legacy root state.json without mutating files."""
+    legacy = os.path.join(root, ROOT_STATE)
+    if not os.path.exists(legacy):
+        return set()
+    with open(legacy, encoding="utf-8") as f:
+        return set(json.load(f).keys())
+
+
 def _post_paths(root: str = ".") -> list[str]:
     """All post files, oldest-first. State files are ignored."""
     return sorted(glob.glob(os.path.join(root, POSTS, "*.md")))
@@ -162,12 +197,18 @@ def main(argv: list[str] | None = None, root: str = ".") -> int:
         raise RuntimeError("TG_USERNAME is required for Telegram publishing")
     tg = Telegram(token) if (token and not dry) else None
 
-    _migrate_root_state(push, root)
+    # Dry-run must not create, delete, or commit anything, but it still needs to
+    # treat legacy root state entries as already-published.
+    if dry:
+        legacy_published = _legacy_slugs(root)
+    else:
+        legacy_published = set()
+        _migrate_root_state(push, root)
 
     failed = 0
     for path in _post_paths(root):
         slug = slug_of(path)
-        if load_state(slug, root) is not None:
+        if slug in legacy_published or load_state(slug, root) is not None:
             continue
         fm, body = parse(path)
         fm["_path"] = path
