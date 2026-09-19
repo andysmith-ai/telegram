@@ -43,26 +43,32 @@ image: https://...       # LINK post preview image, FINAL url, verbatim (optiona
 - No `link:` → a normal post (`richmessage.build`): heading + body + footer.
 - With `link:` → a link post (`richmessage.build_link`): heading, the URL (as the
   caption under `image:` if present, else its own line), commentary, footer.
-- `slug` = the filename without `.md`; it's the `state.json` key and must be stable.
+- `slug` = the filename without `.md`; it's the sibling state file stem and must be stable.
 
 ## CI flow (`.github/workflows/publish.yml`)
 `on: push` (main, `posts/**`) → `python publish/publish.py`. For each `posts/*.md`
-whose slug isn't in `state.json`, **oldest-first**:
-1. **claim first** — write the slug to `state.json` and `git commit`+`push` it
+whose sibling state file doesn't exist, **oldest-first**:
+1. **claim first** — write `posts/<slug>.state.json` and `git commit`+`push` it
    (`[skip ci]`) BEFORE any Telegram call;
 2. `sendRichMessage`, then record `{message_id, url}` and push again.
 `concurrency: telegram-publish` → never two publishers at once.
 
+**Why sibling state files:** a shared mutable `state.json` blocks conflict-free
+parallel producers. Two different posts committed by different producers would
+collide on the same file. Sibling files keep each post's state next to the post,
+so independent posts/updates merge without touching shared mutable state.
+
 **Why claim-first:** a crash or a failed send can then only DROP a post (recorded
-`status: failed`, skipped until you delete the entry), never DUPLICATE it — a
-duplicate storm would spam the channel and get the bot banned. Prefer a missed
-post over a repeated one. (`--dry-run` = no send; `--no-push` = send without git.)
+`status: failed`, skipped until you delete the sibling state file), never
+DUPLICATE it — a duplicate storm would spam the channel and get the bot banned.
+Prefer a missed post over a repeated one. (`--dry-run` = no send; `--no-push` =
+send without git.)
 
 ## First run / seed (do NOT re-spam the channel)
 The repo starts **empty** → only NEW posts arrive → **no seed needed**. Only if you
 **backfill** already-published posts into `posts/` (they're already on the channel
-from the old Zeno path) run `python publish/seed.py` first to mark them published
-without sending.
+from the old Zeno path) run `python publish/seed.py` first to create sibling
+`.state.json` files marking them published without sending.
 
 ## Reuse / provenance
 `publish/richmessage.py` + `publish/telegram.py` are vendored **verbatim** from

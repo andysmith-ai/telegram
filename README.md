@@ -5,7 +5,7 @@ in `posts/`; CI publishes it. **What's in the file is what publishes** — no im
 logic here.
 
 - Design & handoff: **[DESIGN.md](DESIGN.md)**
-- Publisher: [`publish/publish.py`](publish/publish.py) (reconcile vs `state.json`)
+- Publisher: [`publish/publish.py`](publish/publish.py) (reconcile vs `posts/<slug>.state.json`)
 - Workflow: [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
 
 Setup: repo secret `TELEGRAM_BOT_TOKEN`; repo variable `TG_USERNAME`

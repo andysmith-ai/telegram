@@ -1,9 +1,10 @@
 name: Publish to Telegram
 
-# On push of any post, publish the ones not yet in state.json (oldest-first).
-# publish.py itself CLAIMS each post in state.json and pushes BEFORE sending, so a
-# crash can only drop a post, never duplicate it. `[skip ci]` on those commits
-# avoids re-triggering this workflow.
+# On push of any post, publish the ones whose sibling state file doesn't exist
+# (oldest-first). publish.py itself CLAIMS each post by writing
+# posts/<slug>.state.json and pushing BEFORE sending, so a crash can only drop a
+# post, never duplicate it. `[skip ci]` on those commits avoids re-triggering this
+# workflow.
 on:
   push:
     branches: [main]
