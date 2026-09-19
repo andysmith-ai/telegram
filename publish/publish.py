@@ -3,11 +3,12 @@
 WHAT'S IN THE FILE IS WHAT PUBLISHES. No image logic here (screenshots / R2 /
 og:image live upstream); the `image:` front-matter is a final URL used verbatim.
 
-Idempotency = state.json (slug -> record). CLAIM BEFORE SEND: each post is written
-to state.json and pushed to git BEFORE the Telegram call. So a crash or a failed
-send can only DROP a post, never DUPLICATE it -- a duplicate storm would spam the
-channel and earn the bot a ban. We prefer a missed post over a repeated one; a
-dropped post is recorded as `status: failed` and skipped until you remove it.
+Idempotency = a sibling state file per post: posts/<slug>.state.json. CLAIM
+BEFORE SEND: each post's state file is written and pushed to git BEFORE the
+Telegram call. So a crash or a failed send can only DROP a post, never DUPLICATE
+it -- a duplicate storm would spam the channel and earn the bot a ban. We prefer
+a missed post over a repeated one; a dropped post is recorded as `status: failed`
+and skipped until you remove its sibling state file.
 
 Order: oldest-first (files sort by their date-prefixed name).
 
@@ -19,6 +20,11 @@ Post file  posts/YYYY-MM-DD-<slug>.md :
     image: https://...      # LINK post preview image, final URL, verbatim (optional)
     ---
     <body markdown>
+
+Sibling state file posts/YYYY-MM-DD-<slug>.state.json :
+    {"status": "sending"}                  # claim before send
+    {"status": "failed", "error": "..."}   # send failed, no auto-retry
+    {"message_id": 123, "url": "..."}      # success
 
 Env: TELEGRAM_BOT_TOKEN (secret), TG_USERNAME (public channel username, with or
 without `@`). The chat id and public permalink are derived from that one value.
@@ -37,8 +43,8 @@ import sys
 import richmessage
 from telegram import Telegram, TelegramError, permalink
 
-STATE = "state.json"
 POSTS = "posts"
+ROOT_STATE = "state.json"
 
 
 def _unquote(v: str) -> str:
@@ -48,7 +54,8 @@ def _unquote(v: str) -> str:
 
 def parse(path: str) -> tuple[dict, str]:
     """Split `--- front-matter --- body` (flat key: value front-matter)."""
-    text = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
     m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.DOTALL)
     if not m:
         return {}, text.strip()
@@ -74,10 +81,24 @@ def render(fm: dict, body: str) -> dict:
     return richmessage.build(title, body, site_url)
 
 
-def _commit_push(msg: str) -> None:
-    """Commit state.json and push. Raises on failure (so we NEVER send having
-    failed to persist the claim -- a failed claim just retries next run)."""
-    subprocess.run(["git", "add", STATE], check=True, capture_output=True, text=True)
+def state_path(slug: str, root: str = ".") -> str:
+    """Sibling state file path for a post slug."""
+    return os.path.join(root, POSTS, f"{slug}.state.json")
+
+
+def load_state(slug: str, root: str = ".") -> dict | None:
+    """Load a post's sibling state file, or None if it doesn't exist."""
+    path = state_path(slug, root)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _commit_push(msg: str, paths: list[str]) -> None:
+    """Commit the given paths and push. Raises on failure (so we NEVER send
+    having failed to persist the claim -- a failed claim just retries next run)."""
+    subprocess.run(["git", "add", *paths], check=True, capture_output=True, text=True)
     c = subprocess.run(["git", "commit", "-m", msg], capture_output=True, text=True)
     if c.returncode != 0:
         if "nothing to commit" in (c.stdout + c.stderr):
@@ -86,17 +107,54 @@ def _commit_push(msg: str) -> None:
     subprocess.run(["git", "push"], check=True, capture_output=True, text=True)
 
 
-def _save(state: dict, slug: str, record: dict, msg: str, push: bool) -> None:
-    state[slug] = record
-    json.dump(state, open(STATE, "w"), indent=2, ensure_ascii=False)
+def save_state(slug: str, record: dict, msg: str, push: bool, root: str = ".") -> None:
+    """Write a sibling state file and optionally commit + push it."""
+    path = state_path(slug, root)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+        f.write("\n")
     if push:
-        _commit_push(msg)
+        _commit_push(msg, [path])
 
 
-def main() -> int:
-    dry = "--dry-run" in sys.argv[1:]
-    push = "--no-push" not in sys.argv[1:]
-    state = json.load(open(STATE)) if os.path.exists(STATE) else {}
+def _migrate_root_state(push: bool, root: str = ".") -> None:
+    """One-time migration from the legacy root state.json map to sibling files.
+
+    Existing records are copied verbatim, so an already-published post stays
+    skipped and never reposts. The legacy file is removed once all entries are
+    written to their sibling state files.
+    """
+    legacy = os.path.join(root, ROOT_STATE)
+    if not os.path.exists(legacy):
+        return
+    with open(legacy, encoding="utf-8") as f:
+        state = json.load(f)
+    migrated = []
+    for slug, record in state.items():
+        path = state_path(slug, root)
+        if os.path.exists(path):
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        migrated.append(path)
+    os.remove(legacy)
+    if push and migrated:
+        _commit_push("migrate root state.json to sibling state files [skip ci]",
+                     migrated + [legacy])
+
+
+def _post_paths(root: str = ".") -> list[str]:
+    """All post files, oldest-first. State files are ignored."""
+    return sorted(glob.glob(os.path.join(root, POSTS, "*.md")))
+
+
+def main(argv: list[str] | None = None, root: str = ".") -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    dry = "--dry-run" in argv
+    push = "--no-push" not in argv
     username = (os.environ.get("TG_USERNAME") or "").strip().lstrip("@") or None
     chat_id = f"@{username}" if username else ""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -104,10 +162,12 @@ def main() -> int:
         raise RuntimeError("TG_USERNAME is required for Telegram publishing")
     tg = Telegram(token) if (token and not dry) else None
 
+    _migrate_root_state(push, root)
+
     failed = 0
-    for path in sorted(glob.glob(os.path.join(POSTS, "*.md"))):
+    for path in _post_paths(root):
         slug = slug_of(path)
-        if slug in state:
+        if load_state(slug, root) is not None:
             continue
         fm, body = parse(path)
         fm["_path"] = path
@@ -119,23 +179,23 @@ def main() -> int:
 
         # CLAIM FIRST: persist + push before sending. From here a failure can only
         # drop this post (recorded as failed), never duplicate it.
-        _save(state, slug, {"status": "sending"}, f"claim {slug} [skip ci]", push)
+        save_state(slug, {"status": "sending"}, f"claim {slug} [skip ci]", push, root)
         try:
             result = tg.send_rich_message(chat_id, rich, disable_notification=True)
         except TelegramError as e:
             print(f"FAILED {slug}: {e}", file=sys.stderr)
-            _save(state, slug, {"status": "failed", "error": str(e)[:300]},
-                  f"failed {slug} [skip ci]", push)
+            save_state(slug, {"status": "failed", "error": str(e)[:300]},
+                       f"failed {slug} [skip ci]", push, root)
             failed += 1
             continue
         mid = result.get("message_id")
         rec = {"message_id": mid, "url": permalink(chat_id, username, mid)}
-        _save(state, slug, rec, f"published {slug} [skip ci]", push)
+        save_state(slug, rec, f"published {slug} [skip ci]", push, root)
         print(f"posted {slug} -> {rec['url']}")
 
     if failed:
         print(f"{failed} post(s) failed AFTER claim -> dropped, not retried. "
-              f"To re-send, delete their entries from {STATE}.", file=sys.stderr)
+              f"To re-send, delete their sibling state file.", file=sys.stderr)
         return 1
     return 0
 

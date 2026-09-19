@@ -1,4 +1,4 @@
-"""Seed state.json so a BACKFILL doesn't re-blast the channel.
+"""Seed sibling state files so a BACKFILL doesn't re-blast the channel.
 
 Only needed if you drop already-published posts into posts/ (they're already on
 the channel from the old Zeno path). Marks every current posts/*.md as published
@@ -12,21 +12,20 @@ import glob
 import json
 import os
 
-from publish import slug_of  # reuse the slug rule
-
-STATE = "state.json"
-POSTS = "posts"
+from publish import POSTS, slug_of, state_path
 
 
 def main() -> int:
-    state = json.load(open(STATE)) if os.path.exists(STATE) else {}
     n = 0
     for path in sorted(glob.glob(os.path.join(POSTS, "*.md"))):
         slug = slug_of(path)
-        if slug not in state:
-            state[slug] = {"seeded": True}
+        sp = state_path(slug)
+        if not os.path.exists(sp):
+            os.makedirs(os.path.dirname(sp), exist_ok=True)
+            with open(sp, "w", encoding="utf-8") as f:
+                json.dump({"seeded": True}, f, indent=2, ensure_ascii=False)
+                f.write("\n")
             n += 1
-    json.dump(state, open(STATE, "w"), indent=2, ensure_ascii=False)
     print(f"seeded {n} post(s) as already-published")
     return 0
 
